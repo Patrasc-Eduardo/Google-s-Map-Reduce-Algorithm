@@ -13,6 +13,14 @@ typedef struct vector
     int total;
 } vector;
 
+void print_vector(vector *v)
+{
+    for (int i = 0; i < v->total; ++i)
+    {
+        printf("%d ", (v->items[i]));
+    }
+}
+
 void vector_init(vector *v)
 {
     v->capacity = VECTOR_INIT_CAPACITY;

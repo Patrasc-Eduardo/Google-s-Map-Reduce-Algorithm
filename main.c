@@ -15,7 +15,7 @@ typedef struct file_args
 
 typedef struct key_value_pair {
     int key;
-    vector values;
+    vector* values;
 } TKeyValuePair, *PKeyValuePair;
 
 typedef struct partial_solution_vec {
@@ -30,7 +30,18 @@ typedef struct threads_args
     pthread_mutex_t *mutex;
     PFileArgument *files_list;
     long int* files_list_size;
+    PPartialSolutionVector partial_list;
 } ThreadArguments, *PThreadArguments;
+
+void printPartialSolutionsVector(PPartialSolutionVector partial_list) {
+    for (int i = 0; i < partial_list->vec_size; ++i)
+    {
+        printf("key:%d\n", partial_list->key_value[i]->key);
+        printf("values: ");
+        print_vector(&partial_list->key_value[i]->values);
+        printf("\n");
+    }
+}
 
 PFileArgument remove_from_array_at_pos(int pos, PFileArgument *files_list, long int *files_list_size)
 {
@@ -77,6 +88,77 @@ PFileArgument chooseFile(PFileArgument *files_list, long int *files_list_size, p
     return save_file;
 }
 
+unsigned int log2n(unsigned int n)
+{
+    return (n > 1) ? 1 + log2n(n / 2) : 0;
+}
+
+unsigned int custom_pow(unsigned int a, unsigned int b) // a^b
+{
+    unsigned int res = 1;
+    while (b)
+    {
+        if (b & 1)
+        {
+            res = res * a;
+        }
+        a = a * a;
+        b = b >> 1;
+    }
+    return res;
+}
+
+void check_for_perf_power(int n, PPartialSolutionVector partial_solutions)
+{
+    if (n == 1)
+    {
+        for (int i = 0; i < partial_solutions->vec_size; ++i)
+        {
+            vector_add(&partial_solutions->key_value[i]->values, 1);
+        }
+    }
+    unsigned int lgn = log2n(n);
+    // printf("lgn: %u\n", lgn);
+
+    int found = 0;
+    for (unsigned int b = 2; b < lgn; ++b)
+    {
+        long unsigned int lowa = 1L;
+        long unsigned int higha = 1L << (lgn / b + 1);
+        // printf("BBB: %u\n", b);
+        // printf("lowa: %lu\n", lowa);
+        // printf("higha: %lu\n", higha);
+        while (lowa < higha - 1)
+        {
+            if (found == 1)
+            {
+                found = 0;
+                break;
+            }
+            unsigned int mida = (lowa + higha) >> 1;
+            unsigned int ab = custom_pow(mida, b);
+            // printf("mida: %u\n", mida);
+            // printf("ab: %u\n", ab);
+
+            if (ab > n)
+            {
+                higha = mida;
+            }
+            else if (ab < n)
+            {
+                lowa = mida;
+            }
+            else
+            {
+                found = 1;
+                // printf("n: %u, mida: %u, b:%u\n", n, mida, b); // mida ^ b
+                // TODO put in map
+                partial_solutions->key_value[b - 2]->key = b;
+                vector_add(&partial_solutions->key_value[b - 2]->values, ab);
+            }
+        }
+    }
+}
 void *f_M(void *arg)
 {
     PThreadArguments args = (PThreadArguments)arg;
@@ -101,8 +183,15 @@ void *f_M(void *arg)
             
             printf("nr:%d\n", n);
             for(int i = 0; i < n; ++i) {
-                fscanf(input, "%d\n", &nr);
-                printf("nr%d:%d\n", i, nr);
+                
+                if (i == (n - 1))  {
+                    fscanf(input, "%d\n", &nr);
+                } else {
+                    fscanf(input, "%d\n", &nr);
+                }
+                //printf("nr%d:%d\n", i, nr);
+
+                check_for_perf_power(nr, args->partial_list);
             }
             
             fclose(input);
@@ -118,8 +207,11 @@ void *f_R(void *arg)
 {
     PThreadArguments args = (PThreadArguments)arg;
 
-    printf("t_id after: %d\n", args->id);
-
+    // pthread_mutex_lock(args->mutex);
+    // printf("\nHello from R threads%d\n", args->id);
+    // printPartialSolutionsVector(args->partial_list);
+    // printf("\n\n");
+    // pthread_mutex_unlock(args->mutex);
     pthread_exit(NULL);
 }
 
@@ -227,8 +319,9 @@ int main(int argc, char const *argv[])
     pthread_mutex_t *mutex = malloc(sizeof(pthread_mutex_t));
     
     PPartialSolutionVector partial_solutions = malloc(sizeof(TPartialSolutionVector));
-    partial_solutions->vec_size = 0;
+    partial_solutions->vec_size = num_of_reducers;
     partial_solutions->key_value = malloc(num_of_reducers * sizeof(PKeyValuePair));
+    
     if (partial_solutions->key_value != NULL) {
         for(int i = 0; i < num_of_reducers; ++i) {
             partial_solutions->key_value[i] = malloc(sizeof(TKeyValuePair));
@@ -303,6 +396,7 @@ int main(int argc, char const *argv[])
         args->mutex = mutex;
         args->files_list = files_list;
         args->files_list_size = &files_list_size;
+        args->partial_list = partial_solutions;
 
         if (i < num_of_mappers) {
             r = pthread_create(&threads[i], NULL, f_M, args);
@@ -334,6 +428,8 @@ int main(int argc, char const *argv[])
         }
     }
 
+    printPartialSolutionsVector(partial_solutions);
+    printf("\n\n");
     // printf("M : %d, P: %d, file:%s\n", num_of_mappers, num_of_reducers, argv[3]);
     pthread_barrier_destroy(barrier);
     pthread_mutex_destroy(mutex);
